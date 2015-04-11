@@ -1,8 +1,13 @@
 local loop = require("socketloop")
 local glue = require("glue")
-
 local flatdb = require("flatdb")
 
+local string_sub, string_upper, string_format = string.sub, string.upper, string.format
+local string_find, string_gsub = string.find, string.gsub
+local table_remove, table_concat, table_insert = table.remove, table.concat, table.insert
+
+-- initialize everything
+--======================
 local db = assert(flatdb("./db"))
 
 if not db[0] then
@@ -13,29 +18,35 @@ if not db.expire then
 	db.expire = {[0] = {}, size = 0}
 end
 
-local shutdown = false
+local expire = db.expire
 
+local shutdown = false
+--~~~~~~~~~~~~~~~~~~~~~~
+
+
+-- define redis stuff
+--======================
 local RESP
 RESP = {
 	simple_string = function (s)
-		return string.format("+%s\r\n", s)
+		return string_format("+%s\r\n", s)
 	end,
 	error = function (s)
-		return string.format("-%s\r\n", s)
+		return string_format("-%s\r\n", s)
 	end,
 	integer = function (n)
-		return string.format(":%d\r\n", n)
+		return string_format(":%d\r\n", n)
 	end,
 	bulk_string = function (s)
 		if s == nil then return "$-1\r\n" end
-		return string.format("$%d\r\n%s\r\n", #tostring(s), s)
+		return string_format("$%d\r\n%s\r\n", #tostring(s), s)
 	end,
 	array = function (t)
 		local ret = {"*"..#t.."\r\n"}
 		for i, v in ipairs(t) do
 			ret[i + 1] = type(v) == "string" and RESP.bulk_string(v) or RESP.integer(v)
 		end
-		return table.concat(ret)
+		return table_concat(ret)
 	end
 }
 
@@ -49,7 +60,7 @@ local cmd_server = {
 	end,
 	SHUTDOWN = function(page, key)
 		loop.stop()
-		if not key or string.upper(key) == "SAVE" then
+		if not key or string_upper(key) == "SAVE" then
 			if not db:save() then return RESP.error("ERROR") end
 		end
 		shutdown = true
@@ -69,8 +80,8 @@ local cmd_connection = {
 			if not db[index] then
 				db[index] = {}
 			end
-			if not db.expire[index] then
-				db.expire[index] = {}
+			if not expire[index] then
+				expire[index] = {}
 			end
 			return RESP.simple_string("OK"), index
 		else
@@ -88,24 +99,24 @@ local cmd_keys = {
 				db[page][v] = nil
 				c = c + 1
 			end
-			if db.expire[page][v] then
-				db.expire[page][v] = nil
-				db.expire.size = db.expire.size - 1
+			if expire[page][v] then
+				expire[page][v] = nil
+				expire.size = expire.size - 1
 			end
 		end
 		return #args == 1 and RESP.simple_string("OK") or RESP.integer(c)
 	end,
 	EXPIRE = function(page, key, seconds)
 		if db[page][key] then
-			db.expire[page][key] = os.time() + tonumber(seconds)
-			db.expire.size = db.expire.size + 1
+			expire[page][key] = os.time() + tonumber(seconds)
+			expire.size = expire.size + 1
 			return RESP.integer(1)
 		else
 			return RESP.integer(0)
 		end
 	end,
 	KEYS = function(page, pattern)
-		pattern = string.gsub(pattern, "\\?[*?]", {
+		pattern = string_gsub(pattern, "\\?[*?]", {
 			["\\?"] = "%?",
 			["\\*"] = "%*",
 			["*"] = ".*",
@@ -113,7 +124,7 @@ local cmd_keys = {
 		})
 		local ret = {}
 		for k in pairs(db[page]) do
-			if string.find(k, pattern) then
+			if string_find(k, pattern) then
 				ret[#ret + 1] = k
 			end
 		end
@@ -128,18 +139,18 @@ local cmd_strings = {
 	SET = function(page, key, value, seconds)
 		db[page][key] = value
 		if seconds == nil then
-			db.expire[page][key] = nil
-			if db.expire[page][key] then db.expire.size = db.expire.size - 1 end
+			expire[page][key] = nil
+			if expire[page][key] then expire.size = expire.size - 1 end
 		else
-			if not db.expire[page][key] then db.expire.size = db.expire.size + 1 end
-			db.expire[page][key] = os.time() + tonumber(seconds)
+			if not expire[page][key] then expire.size = expire.size + 1 end
+			expire[page][key] = os.time() + tonumber(seconds)
 		end
 		return RESP.simple_string("OK")
 	end,
 	SETEX = function(page, key, seconds, value)
 		db[page][key] = value
-		if not db.expire[page][key] then db.expire.size = db.expire.size + 1 end
-		db.expire[page][key] = os.time() + tonumber(seconds)
+		if not expire[page][key] then expire.size = expire.size + 1 end
+		expire[page][key] = os.time() + tonumber(seconds)
 		return RESP.simple_string("OK")
 	end,
 	INCR = function(page, key)
@@ -160,7 +171,7 @@ local cmd_lists = {
 		if type(db[page][key]) ~= "table" then
 			return RESP.error("ERROR: list required")
 		end
-		table.insert(db[page][key], value)
+		table_insert(db[page][key], value)
 		return RESP.integer(#db[page][key])
 	end,
 	LPUSH = function(page, key, value)
@@ -170,7 +181,7 @@ local cmd_lists = {
 		if type(db[page][key]) ~= "table" then
 			return RESP.error("ERROR: list required")
 		end
-		table.insert(db[page][key], 1, value)
+		table_insert(db[page][key], 1, value)
 		return RESP.integer(#db[page][key])
 	end,
 	RPOP = function(page, key)
@@ -178,7 +189,7 @@ local cmd_lists = {
 			if type(db[page][key]) ~= "table" then
 				return RESP.error("ERROR: list required")
 			end
-			return RESP.bulk_string(table.remove(db[page][key]))
+			return RESP.bulk_string(table_remove(db[page][key]))
 		else
 			return RESP.bulk_string(nil)
 		end
@@ -188,7 +199,7 @@ local cmd_lists = {
 			if type(db[page][key]) ~= "table" then
 				return RESP.error("ERROR: list required")
 			end
-			return RESP.bulk_string(table.remove(db[page][key], 1))
+			return RESP.bulk_string(table_remove(db[page][key], 1))
 		else
 			return RESP.bulk_string(nil)
 		end
@@ -267,69 +278,11 @@ local COMMAND_ARGC = {
 	LRANGE = 3
 }
 
-local function wait_char(skt, char, res)
-	local input = res or ""
-	while true do
-		if #input > 0 and string.sub(input, 1, 1) == char then
-			return string.sub(input, 2)
-		end
-		local tmp = skt:receive()
-		if tmp then
-			input = input..tmp
-		else
-			skt:close()
-			return nil
-		end
-	end
-end
-
-local function wait_number(skt, res)
-	local input = res
-	while true do
-		local i, j = string.find(input, "%d+")
-		if i then
-			return tonumber(string.sub(input, i, j)), string.sub(input, j + 1)
-		end
-		local tmp = skt:receive()
-		if tmp then
-			input = input..tmp
-		end
-	end
-end
-
-local function wait_argv(skt, res)
-	local res = wait_char(skt, "$", res)
-	local n, res = wait_number(skt, res)
-	local input = res
-	while true do
-		if #input>=n then
-			return string.sub(input, 1, n), string.sub(input, n + 1)
-		end
-		local tmp = skt:receive(n)
-		if tmp then
-			input = input..tmp
-		end
-	end
-end
-
-local function get_args(skt)
-	local argc, argv
-	local args = {}
-	local res = wait_char(skt, "*")
-	if res == nil then return nil end
-	argc, res = wait_number(skt, res)
-	for i = 1, argc do
-		argv, res = wait_argv(skt, res)
-		args[#args + 1] = argv
-	end
-	return args
-end
-
 local function check_expired(page, key)
-	if db.expire[page][key] and db.expire[page][key] < os.time() then
+	if expire[page][key] and expire[page][key] < os.time() then
 		db[page][key] = nil
-		db.expire[page][key] = nil
-		db.expire.size = db.expire.size - 1
+		expire[page][key] = nil
+		expire.size = expire.size - 1
 		return true
 	end
 	return false
@@ -354,15 +307,37 @@ local function launch_expire()
 		end
 	end
 end
+--~~~~~~~~~~~~~~~~~~~~~~
+
+
+-- ledis server
+--======================
+local function get_args(skt)
+	local args = {}
+	local tmp = skt:receive()
+	if tmp == "" then tmp = skt:receive() end
+	if not tmp or string_sub(tmp, 1, 1) ~= "*" then return nil end
+	tmp = string_sub(tmp, 2)
+	local argc = tonumber(tmp)
+	for i = 1, argc do
+		local tmp = skt:receive()
+		if tmp == "" then tmp = skt:receive() end
+		if not tmp or string_sub(tmp, 1, 1) ~= "$" then return nil end
+		tmp = string_sub(tmp, 2)
+		tmp = skt:receive(tonumber(tmp))
+		args[#args + 1] = tmp
+	end
+	return args
+end
 
 local function handler(skt)
 	local page = 0
 	while true do
-		if db.expire.size > 320 then launch_expire() end
+		if expire.size > 320 then launch_expire() end
 		local ret, tag
 		local args = get_args(skt)
 		if not args then break end
-		local cmd = string.upper(table.remove(args, 1))
+		local cmd = string_upper(table_remove(args, 1))
 		if COMMANDS[cmd] then
 			if #args >= COMMAND_ARGC[cmd] then
 				check_expired(page, args[1])
