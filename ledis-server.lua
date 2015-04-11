@@ -1,93 +1,17 @@
-local pp = require("pp")
-local lfs = require("lfs")
 local loop = require("socketloop")
+local glue = require("glue")
 
-------------------------------------------------------
------------------------ FlatDB -----------------------
-------------------------------------------------------
-
-local flatdb
-do
-	local function isFile(path)
-		return lfs.attributes(path, "mode") == "file"
-	end
-
-	local function isDir(path)
-		return lfs.attributes(path, "mode") == "directory"
-	end
-
-	local function load_page(path)
-		return dofile(path)
-	end
-
-	local function store_page(path, page)
-		if type(page) == "table" then
-			local f = io.open(path, "wb")
-			if f then
-				f:write("return ")
-				f:write(pp.format(page))
-				f:close()
-				return true
-			end
-		end
-		return false
-	end
-
-	local pool = {}
-
-	local db_funcs = {
-		save = function(db, p)
-			if p then
-				if type(p) == "string" and type(db[p]) == "table" then
-					return store_page(pool[db].."/"..p, db[p])
-				else
-					return false
-				end
-			end
-			for p, page in pairs(db) do
-				store_page(pool[db].."/"..p, page)
-			end
-			return true
-		end
-	}
-
-	local mt = {
-		__index = function(db, k)
-			if db_funcs[k] then return db_funcs[k] end
-			if isFile(pool[db].."/"..k) then
-				db[k] = load_page(pool[db].."/"..k)
-			end
-			return rawget(db, k)
-		end
-	}
-
-	pool.hack = db_funcs
-
-	flatdb = setmetatable(pool, {
-		__mode = "kv",
-		__call = function(pool, path)
-			if pool[path] then return pool[path] end
-			if not isDir(path) then return end
-			local db = {}
-			setmetatable(db, mt)
-			pool[path] = db
-			pool[db] = path
-			return db
-		end
-	})
-end
-
------------------------------------------------------
------------------------ Ledis -----------------------
------------------------------------------------------
+local flatdb = require("flatdb")
 
 local db = assert(flatdb("./db"))
 
-if not db["0"] then
-	db["0"] = {}
+if not db[0] then
+	db[0] = {}
 end
 
-local expire = {["0"] = {}}
+if not db.expire then
+	db.expire = {[0] = {}, size = 0}
+end
 
 local RESP
 RESP = {
@@ -113,70 +37,113 @@ RESP = {
 	end
 }
 
-local COMMANDS = {
-	PING = function()
-		return RESP.simple_string("PONG")
-	end,
-	SAVE = function(page)
-		if db:save(page) then
+local cmd_server = {
+	SAVE = function()
+		if db:save() then
 			return RESP.simple_string("OK")
 		else
 			return RESP.error("ERROR")
 		end
+	end
+}
+
+local cmd_connection = {
+	ECHO = function(page, message)
+		return RESP.bulk_string(message)
 	end,
-	SELECT = function (page, key)
-		if tonumber(key) and tonumber(key) < 16 then
-			if not db[key] then
-				db[key] = {}
+	PING = function()
+		return RESP.simple_string("PONG")
+	end,
+	SELECT = function (page, index)
+		index = tonumber(index)
+		if index and index < 16 then
+			if not db[index] then
+				db[index] = {}
 			end
-			if not expire[key] then
-				expire[key] = {}
+			if not db.expire[index] then
+				db.expire[index] = {}
 			end
-			return RESP.simple_string("OK"), key
+			return RESP.simple_string("OK"), index
 		else
 			return RESP.error("ERROR: database not found")
 		end
-	end,
-	EXPIRE = function(page, key, seconds)
-		if db[page][key] then
-			expire[page][key] = os.time() + tonumber(seconds)
-			return RESP.integer(1)
-		else
-			return RESP.integer(0)
-		end
-	end,
+	end
+}
+
+local cmd_keys = {
 	DEL = function(page, ...)
 		local c = 0
 		local args = {...}
 		for i, v in ipairs(args) do
 			if db[page][v] then
 				db[page][v] = nil
-				expire[page][v] = nil
 				c = c + 1
+			end
+			if db.expire[page][v] then
+				db.expire[page][v] = nil
+				db.expire.size = db.expire.size - 1
 			end
 		end
 		return #args == 1 and RESP.simple_string("OK") or RESP.integer(c)
 	end,
+	EXPIRE = function(page, key, seconds)
+		if db[page][key] then
+			db.expire[page][key] = os.time() + tonumber(seconds)
+			db.expire.size = db.expire.size + 1
+			return RESP.integer(1)
+		else
+			return RESP.integer(0)
+		end
+	end,
+	KEYS = function(page, pattern)
+		pattern = string.gsub(pattern, "\\?[*?]", {
+			["\\?"] = "%?",
+			["\\*"] = "%*",
+			["*"] = ".*",
+			["?"] = ".?"
+		})
+		local ret = {}
+		for k in pairs(db[page]) do
+			if string.find(k, pattern) then
+				ret[#ret + 1] = k
+			end
+		end
+		return RESP.array(ret)
+	end
+}
+
+local cmd_strings = {
 	GET = function(page, key)
 		return RESP.bulk_string(db[page][key])
 	end,
 	SET = function(page, key, value, seconds)
 		db[page][key] = value
 		if seconds == nil then
-			expire[page][key] = nil
+			db.expire[page][key] = nil
+			if db.expire[page][key] then db.expire.size = db.expire.size - 1 end
 		else
-			expire[page][key] = os.time() + tonumber(seconds)
+			if not db.expire[page][key] then db.expire.size = db.expire.size + 1 end
+			db.expire[page][key] = os.time() + tonumber(seconds)
 		end
 		return RESP.simple_string("OK")
 	end,
+	SETEX = function(page, key, seconds, value)
+		db[page][key] = value
+		if not db.expire[page][key] then db.expire.size = db.expire.size + 1 end
+		db.expire[page][key] = os.time() + tonumber(seconds)
+		return RESP.simple_string("OK")
+	end,
 	INCR = function(page, key)
-		db[page][key] = (db[page][key] or 0) + 1
+		db[page][key] = (tonumber(db[page][key]) or 0) + 1
 		return RESP.integer(db[page][key])
 	end,
 	DECR = function(page, key)
-		db[page][key] = (db[page][key] or 0) - 1
+		db[page][key] = (tonumber(db[page][key]) or 0) - 1
 		return RESP.integer(db[page][key])
-	end,
+	end
+}
+
+local cmd_lists = {
 	RPUSH = function(page, key, value)
 		if not db[page][key] then
 			db[page][key] = {}
@@ -256,16 +223,31 @@ local COMMANDS = {
 	end
 }
 
+local COMMANDS = glue.merge({},
+	cmd_server,
+	cmd_connection,
+	cmd_keys,
+	cmd_strings,
+	cmd_lists
+)
+
 local COMMAND_ARGC = {
-	PING = 0,
 	SAVE = 0,
+	--
+	ECHO = 1,
+	PING = 0,
 	SELECT = 1,
-	EXPIRE = 2,
+	--
 	DEL = 1,
+	EXPIRE = 2,
+	KEYS = 1,
+	--
 	GET = 1,
 	SET = 2,
+	SETEX = 3,
 	INCR = 1,
 	DECR = 1,
+	--
 	RPUSH = 2,
 	LPUSH = 2,
 	RPOP = 1,
@@ -285,7 +267,7 @@ local function wait_char(skt, char, res)
 		if tmp then
 			input = input..tmp
 		else
-			loop.step(0.001)
+			loop.step()
 		end
 	end
 end
@@ -331,22 +313,47 @@ local function get_args(skt)
 	return args
 end
 
-local function try_expire(page, key)
-	if expire[page][key] and expire[page][key] < os.time() then
+local function check_expired(page, key)
+	if db.expire[page][key] and db.expire[page][key] < os.time() then
 		db[page][key] = nil
-		expire[page][key] = nil
+		db.expire[page][key] = nil
+		db.expire.size = db.expire.size - 1
+		return true
+	end
+	return false
+end
+
+local function launch_expire()
+	for page, keyspace in pairs(db) do
+		if tonumber(page) then
+			local key
+			repeat
+				local expired = 0
+				local tmp = {}
+				for i = 1, 20 do
+					key = next(keyspace, key)
+					if key == nil then break end
+					tmp[#tmp + 1] = key
+				end
+				for _, key in ipairs(tmp) do
+					expired = expired + (check_expired(page, key) and 1 or 0)
+				end
+			until expired < 5
+		end
 	end
 end
 
 local function handler(skt)
-	local page = "0"
+	local page = 0
 	while true do
+		if db.expire.size > 320 then launch_expire() end
 		local ret, tag
 		local args = get_args(skt)
+		print(unpack(args))
 		local cmd = string.upper(table.remove(args, 1))
 		if COMMANDS[cmd] then
 			if #args >= COMMAND_ARGC[cmd] then
-				try_expire(page, args[1])
+				check_expired(page, args[1])
 				ret, tag = COMMANDS[cmd](page, unpack(args))
 			else
 				ret = RESP.error("ERROR: wrong argument numbers")
