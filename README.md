@@ -20,7 +20,7 @@ Ledis is still in its early stage. It means it may be so buggy that you **SHOULD
 
 TODO
 ==========
-- More testing required
+- More tests required
 - Implement more commands
 - Make it robust enough to serve for productions
 
@@ -30,8 +30,8 @@ Dependencies
 - [pp](https://github.com/luapower/pp)
 - [lfs](http://keplerproject.github.io/luafilesystem)
 - [socketloop](https://github.com/luapower/socketloop)
-  - [socket](https://github.com/diegonehab/luasocket)
-  - [glue](https://github.com/luapower/glue)
+- [socket](https://github.com/diegonehab/luasocket)
+- [glue](https://github.com/luapower/glue)
 
 All above libraries can be found on [LuaPower](https://luapower.com/).
 

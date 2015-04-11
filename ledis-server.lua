@@ -349,7 +349,6 @@ local function handler(skt)
 		if db.expire.size > 320 then launch_expire() end
 		local ret, tag
 		local args = get_args(skt)
-		print(unpack(args))
 		local cmd = string.upper(table.remove(args, 1))
 		if COMMANDS[cmd] then
 			if #args >= COMMAND_ARGC[cmd] then
