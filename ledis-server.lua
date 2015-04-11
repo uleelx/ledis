@@ -13,6 +13,8 @@ if not db.expire then
 	db.expire = {[0] = {}, size = 0}
 end
 
+local shutdown = false
+
 local RESP
 RESP = {
 	simple_string = function (s)
@@ -44,6 +46,13 @@ local cmd_server = {
 		else
 			return RESP.error("ERROR")
 		end
+	end,
+	SHUTDOWN = function(page, key)
+		loop.stop()
+		if not key or string.upper(key) == "SAVE" then
+			if not db:save() then return RESP.error("ERROR") end
+		end
+		shutdown = true
 	end
 }
 
@@ -233,6 +242,7 @@ local COMMANDS = glue.merge({},
 
 local COMMAND_ARGC = {
 	SAVE = 0,
+	SHUTDOWN = 0,
 	--
 	ECHO = 1,
 	PING = 0,
@@ -267,7 +277,8 @@ local function wait_char(skt, char, res)
 		if tmp then
 			input = input..tmp
 		else
-			loop.step()
+			skt:close()
+			return nil
 		end
 	end
 end
@@ -305,6 +316,7 @@ local function get_args(skt)
 	local argc, argv
 	local args = {}
 	local res = wait_char(skt, "*")
+	if res == nil then return nil end
 	argc, res = wait_number(skt, res)
 	for i = 1, argc do
 		argv, res = wait_argv(skt, res)
@@ -349,6 +361,7 @@ local function handler(skt)
 		if db.expire.size > 320 then launch_expire() end
 		local ret, tag
 		local args = get_args(skt)
+		if not args then break end
 		local cmd = string.upper(table.remove(args, 1))
 		if COMMANDS[cmd] then
 			if #args >= COMMAND_ARGC[cmd] then
@@ -363,6 +376,7 @@ local function handler(skt)
 		if tag ~= nil and cmd == "SELECT" then
 			page = tag
 		end
+		if shutdown then skt:close(); break end
 		skt:send(ret)
 	end
 end
