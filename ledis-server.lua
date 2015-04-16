@@ -5,6 +5,7 @@ local flatdb = require("flatdb")
 local string_sub, string_upper, string_format = string.sub, string.upper, string.format
 local string_find, string_gsub = string.find, string.gsub
 local table_remove, table_concat, table_insert = table.remove, table.concat, table.insert
+local unpack = unpack or table.unpack
 
 -- initialize everything
 --======================
@@ -23,44 +24,46 @@ local expire = db.expire
 local shutdown = false
 --~~~~~~~~~~~~~~~~~~~~~~
 
--- wait and wake
+-- bulletin board stuff
 --======================
-local w = {}
+local board = {}
 
-local function wait(page, ...)
+local function reg(page, ...)
 	local thread = loop.current()
-	if not w[page] then
-		w[page] = {}
+	if not board[page] then
+		board[page] = {}
 	end
 	for i = 1, select("#", ...) do
 		local key = select(i, ...)
-		if not w[page][key] then
-			w[page][key] = {}
+		if not board[page][key] then
+			board[page][key] = {}
 		end
-		table_insert(w[page][key], thread)
+		table_insert(board[page][key], thread)
 	end
 	return loop.suspend()
 end
 
-local function wake(page, key)
-	if w[page] and type(w[page][key]) == "table" and next(w[page][key]) then
-		loop.resume(table_remove(w[page][key], 1), key)
-	end
-end
-
-local function bye(page, ...)
+local function unreg(page, ...)
 	local me = loop.current()
-	for i = 1, select("#", ...) - 1 do
+	for i = 1, select("#", ...) do
 		local key = select(i, ...)
-		for index, thread in ipairs(w[page][key]) do
+		for index, thread in ipairs(board[page][key]) do
 			if thread == me then
-				table_remove(w[page][key], index)
+				table_remove(board[page][key], index)
 				break
 			end
 		end
 	end
 end
 
+local function wake(page, key, n)
+	if board[page] and type(board[page][key]) == "table" then
+		for i = 1, n do
+			if not next(board[page][key]) then break end
+			loop.resume(table_remove(board[page][key], 1), key)
+		end
+	end
+end
 --~~~~~~~~~~~~~~~~~~~~~~
 
 
@@ -214,7 +217,7 @@ local cmd_lists = {
 		for i = 1, select("#", ...) do
 			table_insert(db[page][key], (select(i, ...)))
 		end
-		wake(page, key)
+		wake(page, key, select("#", ...))
 		return RESP.integer(#db[page][key])
 	end,
 	LPUSH = function(page, key, ...)
@@ -227,7 +230,7 @@ local cmd_lists = {
 		for i = 1, select("#", ...) do
 			table_insert(db[page][key], 1, (select(i, ...)))
 		end
-		wake(page, key)
+		wake(page, key, select("#", ...))
 		return RESP.integer(#db[page][key])
 	end,
 	RPOP = function(page, key)
@@ -241,8 +244,10 @@ local cmd_lists = {
 		end
 	end,
 	BRPOP = function(page, ...)
-		for i = 1, select("#", ...) - 1 do
-			local key = select(i, ...)
+		local keys = {...}
+		table_remove(keys)
+		for i = 1, #keys do
+			local key = keys[i]
 			if db[page][key] then
 				if type(db[page][key]) ~= "table" then
 					return RESP.error("ERROR: list required")
@@ -252,9 +257,8 @@ local cmd_lists = {
 				end
 			end
 		end
-		local key = wait(page, ...)
-		local me = loop.current()
-		bye(page, ...)
+		local key = reg(page, unpack(keys))
+		unreg(page, unpack(keys))
 		return RESP.array({key, table_remove(db[page][key])})
 	end,
 	LPOP = function(page, key)
@@ -268,8 +272,10 @@ local cmd_lists = {
 		end
 	end,
 	BLPOP = function(page, ...)
-		for i = 1, select("#", ...) - 1 do
-			local key = select(i, ...)
+		local keys = {...}
+		table_remove(keys)
+		for i = 1, #keys do
+			local key = keys[i]
 			if db[page][key] then
 				if type(db[page][key]) ~= "table" then
 					return RESP.error("ERROR: list required")
@@ -279,8 +285,8 @@ local cmd_lists = {
 				end
 			end
 		end
-		local key = wait(page, ...)
-		bye(page, ...)
+		local key = reg(page, unpack(keys))
+		unreg(page, unpack(keys))
 		return RESP.array({key, table_remove(db[page][key], 1)})
 	end,
 	LLEN = function(page, key)
