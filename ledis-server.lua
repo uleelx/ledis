@@ -23,6 +23,46 @@ local expire = db.expire
 local shutdown = false
 --~~~~~~~~~~~~~~~~~~~~~~
 
+-- wait and wake
+--======================
+local w = {}
+
+local function wait(page, ...)
+	local thread = loop.current()
+	if not w[page] then
+		w[page] = {}
+	end
+	for i = 1, select("#", ...) do
+		local key = select(i, ...)
+		if not w[page][key] then
+			w[page][key] = {}
+		end
+		table_insert(w[page][key], thread)
+	end
+	return loop.suspend()
+end
+
+local function wake(page, key)
+	if w[page] and type(w[page][key]) == "table" and next(w[page][key]) then
+		loop.resume(table_remove(w[page][key], 1), key)
+	end
+end
+
+local function bye(page, ...)
+	local me = loop.current()
+	for i = 1, select("#", ...) - 1 do
+		local key = select(i, ...)
+		for index, thread in ipairs(w[page][key]) do
+			if thread == me then
+				table_remove(w[page][key], index)
+				break
+			end
+		end
+	end
+end
+
+--~~~~~~~~~~~~~~~~~~~~~~
+
 
 -- define redis stuff
 --======================
@@ -164,24 +204,30 @@ local cmd_strings = {
 }
 
 local cmd_lists = {
-	RPUSH = function(page, key, value)
+	RPUSH = function(page, key, ...)
 		if not db[page][key] then
 			db[page][key] = {}
 		end
 		if type(db[page][key]) ~= "table" then
 			return RESP.error("ERROR: list required")
 		end
-		table_insert(db[page][key], value)
+		for i = 1, select("#", ...) do
+			table_insert(db[page][key], (select(i, ...)))
+		end
+		wake(page, key)
 		return RESP.integer(#db[page][key])
 	end,
-	LPUSH = function(page, key, value)
+	LPUSH = function(page, key, ...)
 		if not db[page][key] then
 			db[page][key] = {}
 		end
 		if type(db[page][key]) ~= "table" then
 			return RESP.error("ERROR: list required")
 		end
-		table_insert(db[page][key], 1, value)
+		for i = 1, select("#", ...) do
+			table_insert(db[page][key], 1, (select(i, ...)))
+		end
+		wake(page, key)
 		return RESP.integer(#db[page][key])
 	end,
 	RPOP = function(page, key)
@@ -194,6 +240,23 @@ local cmd_lists = {
 			return RESP.bulk_string(nil)
 		end
 	end,
+	BRPOP = function(page, ...)
+		for i = 1, select("#", ...) - 1 do
+			local key = select(i, ...)
+			if db[page][key] then
+				if type(db[page][key]) ~= "table" then
+					return RESP.error("ERROR: list required")
+				end
+				if next(db[page][key]) then
+					return RESP.array({key, table_remove(db[page][key])})
+				end
+			end
+		end
+		local key = wait(page, ...)
+		local me = loop.current()
+		bye(page, ...)
+		return RESP.array({key, table_remove(db[page][key])})
+	end,
 	LPOP = function(page, key)
 		if db[page][key] then
 			if type(db[page][key]) ~= "table" then
@@ -203,6 +266,22 @@ local cmd_lists = {
 		else
 			return RESP.bulk_string(nil)
 		end
+	end,
+	BLPOP = function(page, ...)
+		for i = 1, select("#", ...) - 1 do
+			local key = select(i, ...)
+			if db[page][key] then
+				if type(db[page][key]) ~= "table" then
+					return RESP.error("ERROR: list required")
+				end
+				if next(db[page][key]) then
+					return RESP.array({key, table_remove(db[page][key], 1)})
+				end
+			end
+		end
+		local key = wait(page, ...)
+		bye(page, ...)
+		return RESP.array({key, table_remove(db[page][key], 1)})
 	end,
 	LLEN = function(page, key)
 		if type(db[page][key]) ~= "table" then
@@ -272,6 +351,7 @@ local COMMAND_ARGC = {
 	RPUSH = 2,
 	LPUSH = 2,
 	RPOP = 1,
+	BRPOP = 2,
 	LPOP = 1,
 	LLEN = 1,
 	LINDEX = 2,
