@@ -359,6 +359,7 @@ local COMMAND_ARGC = {
 	RPOP = 1,
 	BRPOP = 2,
 	LPOP = 1,
+	BLPOP = 2,
 	LLEN = 1,
 	LINDEX = 2,
 	LRANGE = 3
