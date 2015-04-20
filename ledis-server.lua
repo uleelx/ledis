@@ -179,9 +179,9 @@ local cmd_strings = {
 	GET = function(page, key)
 		return RESP.bulk_string(db[page][key])
 	end,
-	SET = function(page, key, value, seconds)
+	SET = function(page, key, value, EX, seconds)
 		db[page][key] = value
-		if seconds == nil then
+		if EX == nil then
 			expire[page][key] = nil
 			if expire[page][key] then expire.size = expire.size - 1 end
 		else
