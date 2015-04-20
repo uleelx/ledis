@@ -69,6 +69,37 @@ end
 
 -- define redis stuff
 --======================
+
+local function check_expired(page, key)
+	if expire[page][key] and expire[page][key] < os.time() then
+		db[page][key] = nil
+		expire[page][key] = nil
+		expire.size = expire.size - 1
+		return true
+	end
+	return false
+end
+
+local function launch_expire()
+	for page, keyspace in pairs(db) do
+		if tonumber(page) then
+			local key
+			repeat
+				local expired = 0
+				local tmp = {}
+				for i = 1, 20 do
+					key = next(keyspace, key)
+					if key == nil then break end
+					tmp[#tmp + 1] = key
+				end
+				for _, key in ipairs(tmp) do
+					expired = expired + (check_expired(page, key) and 1 or 0)
+				end
+			until expired < 5
+		end
+	end
+end
+
 local RESP
 RESP = {
 	simple_string = function (s)
@@ -167,7 +198,7 @@ local cmd_keys = {
 		})
 		local ret = {}
 		for k in pairs(db[page]) do
-			if string_find(k, pattern) then
+			if string_find(k, pattern) and check_expired(page, k) == false then
 				ret[#ret + 1] = k
 			end
 		end
@@ -365,35 +396,6 @@ local COMMAND_ARGC = {
 	LRANGE = 3
 }
 
-local function check_expired(page, key)
-	if expire[page][key] and expire[page][key] < os.time() then
-		db[page][key] = nil
-		expire[page][key] = nil
-		expire.size = expire.size - 1
-		return true
-	end
-	return false
-end
-
-local function launch_expire()
-	for page, keyspace in pairs(db) do
-		if tonumber(page) then
-			local key
-			repeat
-				local expired = 0
-				local tmp = {}
-				for i = 1, 20 do
-					key = next(keyspace, key)
-					if key == nil then break end
-					tmp[#tmp + 1] = key
-				end
-				for _, key in ipairs(tmp) do
-					expired = expired + (check_expired(page, key) and 1 or 0)
-				end
-			until expired < 5
-		end
-	end
-end
 --~~~~~~~~~~~~~~~~~~~~~~
 
 
