@@ -115,10 +115,12 @@ RESP = {
 		if s == nil then return "$-1\r\n" end
 		return string_format("$%d\r\n%s\r\n", #tostring(s), s)
 	end,
-	array = function (t)
-		local ret = {"*"..#t.."\r\n"}
-		for i, v in ipairs(t) do
-			ret[i + 1] = type(v) == "string" and RESP.bulk_string(v) or RESP.integer(v)
+	array = function (t, length)
+		length = length or #t
+		local ret = {"*"..length.."\r\n"}
+		for i = 1, length do
+			local v = t[i]
+			ret[i + 1] = type(v) == "number" and RESP.integer(v) or RESP.bulk_string(v)
 		end
 		return table_concat(ret)
 	end
@@ -359,12 +361,138 @@ local cmd_lists = {
 	end
 }
 
+local cmd_hashes = {
+	HGET = function(page, key, field)
+		if db[page][key] and db[page][key][field] then
+			if type(db[page][key]) ~= "table" then
+				return RESP.error("ERROR: hash required")
+			end
+			return RESP.bulk_string(db[page][key][field])
+		else
+			return RESP.bulk_string(nil)
+		end
+	end,
+	HSET = function(page, key, field, value)
+		if not db[page][key] then
+			db[page][key] = {}
+		end
+		if type(db[page][key]) ~= "table" then
+			return RESP.error("ERROR: hash required")
+		end
+		local ret = db[page][key][field] and 0 or 1
+		db[page][key][field] = value
+		return RESP.integer(ret)
+	end,
+	HMGET = function(page, key, ...)
+		local length = select("#", ...)
+		local ret = {}
+		if db[page][key] then
+			if type(db[page][key]) ~= "table" then
+				return RESP.error("ERROR: hash required")
+			end
+			for i, fd in ipairs{...} do
+				ret[i] = db[page][key][fd]
+			end
+		end
+		return RESP.array(ret, length)
+	end,
+	HMSET = function(page, key, ...)
+		if not db[page][key] then
+			db[page][key] = {}
+		end
+		if type(db[page][key]) ~= "table" then
+			return RESP.error("ERROR: hash required")
+		end
+		for i = 1, select("#", ...), 2 do
+			local field, value = select(i, ...)
+			db[page][key][field] = value
+		end
+		return RESP.simple_string("OK")
+	end,
+	HEXISTS = function(page, key, field)
+		if db[page][key] and db[page][key][field] then
+			if type(db[page][key]) ~= "table" then
+				return RESP.error("ERROR: hash required")
+			end
+			return RESP.integer(1)
+		else
+			return RESP.integer(0)
+		end
+	end,
+	HDEL = function(page, key, ...)
+		local c = 0
+		if db[page][key] then
+			for _, fd in ipairs{...} do
+				if db[page][key][fd] then
+					db[page][key][fd] = nil
+					c = c + 1
+				end
+			end
+		end
+		return RESP.integer(c)
+	end,
+	HLEN = function(page, key)
+		if db[page][key] then
+			if type(db[page][key]) ~= "table" then
+				return RESP.error("ERROR: hash required")
+			end
+			return RESP.integer(glue.count(db[page][key]))
+		end
+		return RESP.integer(0)
+	end,
+	HGETALL = function(page, key)
+		local ret = {}
+		if db[page][key] then
+			if type(db[page][key]) ~= "table" then
+				return RESP.error("ERROR: hash required")
+			end
+			for field, value in pairs(db[page][key]) do
+				table_insert(ret, field)
+				table_insert(ret, value)
+			end
+		end
+		return RESP.array(ret)
+	end,
+	HKEYS = function(page, key)
+		if db[page][key] then
+			if type(db[page][key]) ~= "table" then
+				return RESP.error("ERROR: hash required")
+			end
+			return RESP.array(glue.keys(db[page][key]))
+		end
+		return RESP.array({})
+	end,
+	HVALS = function(page, key)
+		local ret = {}
+		if db[page][key] then
+			if type(db[page][key]) ~= "table" then
+				return RESP.error("ERROR: hash required")
+			end
+			for _, val in pairs(db[page][key]) do
+				table_insert(ret, val)
+			end
+		end
+		return RESP.array(ret)
+	end,
+	HINCRBY = function(page, key, field, increment)
+		if not db[page][key] then
+			db[page][key] = {}
+		end
+		if type(db[page][key]) ~= "table" then
+			return RESP.error("ERROR: hash required")
+		end
+		db[page][key][field] = (tonumber(db[page][key][field]) or 0) + increment
+		return RESP.integer(db[page][key][field])
+	end
+}
+
 local COMMANDS = glue.merge({},
 	cmd_server,
 	cmd_connection,
 	cmd_keys,
 	cmd_strings,
-	cmd_lists
+	cmd_lists,
+	cmd_hashes
 )
 
 local COMMAND_ARGC = {
@@ -393,7 +521,19 @@ local COMMAND_ARGC = {
 	BLPOP = 2,
 	LLEN = 1,
 	LINDEX = 2,
-	LRANGE = 3
+	LRANGE = 3,
+	--
+	HGET = 2,
+	HSET = 3,
+	HMGET = 2,
+	HMSET = 3,
+	HEXISTS = 2,
+	HDEL = 1,
+	HLEN = 1,
+	HGETALL = 1,
+	HKEYS = 1,
+	HVALS = 1,
+	HINCRBY = 3
 }
 
 --~~~~~~~~~~~~~~~~~~~~~~
