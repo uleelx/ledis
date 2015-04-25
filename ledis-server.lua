@@ -24,7 +24,7 @@ local expire = db.expire
 local shutdown = false
 --~~~~~~~~~~~~~~~~~~~~~~
 
--- bulletin board stuff
+-- bulletin board stuff for blocking commands
 --======================
 local board = {}
 
@@ -33,8 +33,7 @@ local function reg(page, ...)
 	if not board[page] then
 		board[page] = {}
 	end
-	for i = 1, select("#", ...) do
-		local key = select(i, ...)
+	for _, key in ipairs{...} do
 		if not board[page][key] then
 			board[page][key] = {}
 		end
@@ -45,8 +44,7 @@ end
 
 local function unreg(page, ...)
 	local me = loop.current()
-	for i = 1, select("#", ...) do
-		local key = select(i, ...)
+	for _, key in ipairs{...} do
 		for index, thread in ipairs(board[page][key]) do
 			if thread == me then
 				table_remove(board[page][key], index)
@@ -71,6 +69,7 @@ end
 --======================
 
 local function check_expired(page, key)
+	if not key then return false end
 	if expire[page][key] and expire[page][key] < os.time() then
 		db[page][key] = nil
 		expire[page][key] = nil
@@ -140,6 +139,24 @@ local cmd_server = {
 			if not db:save() then return RESP.error("ERROR") end
 		end
 		shutdown = true
+	end,
+	DBSIZE = function(page)
+		return RESP.integer(glue.count(db[page]))
+	end,
+	FLUSHDB = function(page)
+		db[page] = {}
+		expire.size = expire.size - glue.count(expire[page])
+		expire[page] = {}
+		return RESP.simple_string("OK")
+	end,
+	FLUSHALL = function()
+		for page in pairs(db) do
+			db[page] = {}
+		end
+		expire = db.expire
+		expire[0] = {}
+		expire.size = 0
+		return RESP.simple_string("OK")
 	end
 }
 
@@ -149,6 +166,9 @@ local cmd_connection = {
 	end,
 	PING = function()
 		return RESP.simple_string("PONG")
+	end,
+	QUIT = function()
+		return true, true
 	end,
 	SELECT = function (page, index)
 		index = tonumber(index)
@@ -182,10 +202,40 @@ local cmd_keys = {
 		end
 		return #args == 1 and RESP.simple_string("OK") or RESP.integer(c)
 	end,
+	EXISTS = function(page, key)
+		return RESP.integer(db[page][key] and 1 or 0)
+	end,
+	RANDOMKEY = function(page)
+		for key in pairs(db[page]) do
+			if check_expired(page, key) == false then
+				return RESP.bulk_string(key)
+			end
+		end
+		return RESP.bulk_string(nil)
+	end,
 	EXPIRE = function(page, key, seconds)
 		if db[page][key] then
 			expire[page][key] = os.time() + tonumber(seconds)
 			expire.size = expire.size + 1
+			return RESP.integer(1)
+		else
+			return RESP.integer(0)
+		end
+	end,
+	TTL = function(page, key)
+		if db[page][key] then
+			if expire[page][key] then
+				return RESP.integer(expire[page][key] - os.time())
+			else
+				return RESP.integer(-1)
+			end
+		else
+			return RESP.integer(-2)
+		end
+	end,
+	PERSIST = function(page, key)
+		if db[page][key] and expire[page][key] then
+			expire[page][key] = nil
 			return RESP.integer(1)
 		else
 			return RESP.integer(0)
@@ -208,7 +258,8 @@ local cmd_keys = {
 	end
 }
 
-local cmd_strings = {
+local cmd_strings
+cmd_strings = {
 	GET = function(page, key)
 		return RESP.bulk_string(db[page][key])
 	end,
@@ -220,6 +271,26 @@ local cmd_strings = {
 		else
 			if not expire[page][key] then expire.size = expire.size + 1 end
 			expire[page][key] = os.time() + tonumber(seconds)
+		end
+		return RESP.simple_string("OK")
+	end,
+	GETSET = function(page, key, value)
+		local ret = cmd_strings.GET(page, key)
+		cmd_strings.SET(page, key, value)
+		return ret
+	end,
+	MGET = function(page, ...)
+		local length = select("#", ...)
+		local ret = {}
+		for i, key in ipairs{...} do
+			ret[i] = db[page][key]
+		end
+		return RESP.array(ret, length)
+	end,
+	MSET = function(page, ...)
+		for i = 1, select("#", ...), 2 do
+			local key, value = select(i, ...)
+			cmd_strings.SET(page, key, value)
 		end
 		return RESP.simple_string("OK")
 	end,
@@ -236,10 +307,19 @@ local cmd_strings = {
 	DECR = function(page, key)
 		db[page][key] = (tonumber(db[page][key]) or 0) - 1
 		return RESP.integer(db[page][key])
+	end,
+	INCRBY = function(page, key, increment)
+		db[page][key] = (tonumber(db[page][key]) or 0) + increment
+		return RESP.integer(db[page][key])
+	end,
+	DECRBY = function(page, key, decrement)
+		db[page][key] = (tonumber(db[page][key]) or 0) - decrement
+		return RESP.integer(db[page][key])
 	end
 }
 
-local cmd_lists = {
+local cmd_lists
+cmd_lists = {
 	RPUSH = function(page, key, ...)
 		if not db[page][key] then
 			db[page][key] = {}
@@ -247,8 +327,8 @@ local cmd_lists = {
 		if type(db[page][key]) ~= "table" then
 			return RESP.error("ERROR: list required")
 		end
-		for i = 1, select("#", ...) do
-			table_insert(db[page][key], (select(i, ...)))
+		for _, value in ipairs{...} do
+			table_insert(db[page][key], value)
 		end
 		wake(page, key, select("#", ...))
 		return RESP.integer(#db[page][key])
@@ -260,8 +340,8 @@ local cmd_lists = {
 		if type(db[page][key]) ~= "table" then
 			return RESP.error("ERROR: list required")
 		end
-		for i = 1, select("#", ...) do
-			table_insert(db[page][key], 1, (select(i, ...)))
+		for _, value in ipairs{...} do
+			table_insert(db[page][key], 1, value)
 		end
 		wake(page, key, select("#", ...))
 		return RESP.integer(#db[page][key])
@@ -328,9 +408,9 @@ local cmd_lists = {
 		end
 		return RESP.integer(#db[page][key] or 0)
 	end,
-	LINDEX = function(page, key, value)
+	LINDEX = function(page, key, index)
 		if type(db[page][key]) == "table" then
-			local i = tonumber(value)
+			local i = tonumber(index)
 			if i < 0 then i = i + #db[page][key] end
 			i = i + 1
 			return RESP.bulk_string(db[page][key][i])
@@ -338,7 +418,7 @@ local cmd_lists = {
 			return RESP.bulk_string(nil)
 		end
 	end,
-	LRANGE = function(page, key, start, stop)
+	LRANGE = function(page, key, start, stop, trim)
 		if type(db[page][key]) ~= "table" then
 			return RESP.error("ERROR: list required")
 		end
@@ -357,7 +437,27 @@ local cmd_lists = {
 		for i = start, stop do
 			ret[#ret + 1] = t[i]
 		end
+		if trim then return ret end
 		return RESP.array(ret)
+	end,
+	LTRIM = function(page, key, start, stop)
+		local t = cmd_lists.LRANGE(page, key, start, stop, true)
+		if type(t) ~= "table" then return t end
+		db[page][key] = t
+		return RESP.simple_string("OK")
+	end,
+	LSET = function(page, key, index, value)
+		if type(db[page][key]) ~= "table" then
+			return RESP.error("ERROR: list required")
+		end
+		local i = tonumber(index)
+		if i < 0 then i = i + #db[page][key] end
+		i = i + 1
+		if i < 0 or i > #db[page][key] then
+			return RESP.error("ERROR: out of range indexes")
+		end
+		db[page][key][i] = value
+		return RESP.simple_string("OK")
 	end
 }
 
@@ -498,20 +598,33 @@ local COMMANDS = glue.merge({},
 local COMMAND_ARGC = {
 	SAVE = 0,
 	SHUTDOWN = 0,
+	DBSIZE = 0,
+	FLUSHDB = 0,
+	FLUSHALL = 0,
 	--
 	ECHO = 1,
 	PING = 0,
+	QUIT = 0,
 	SELECT = 1,
 	--
 	DEL = 1,
+	EXISTS = 1,
+	RANDOMKEY = 0,
 	EXPIRE = 2,
+	TTL = 1,
+	PERSIST = 1,
 	KEYS = 1,
 	--
 	GET = 1,
 	SET = 2,
+	GETSET = 2,
+	MGET = 1,
+	MSET = 2,
 	SETEX = 3,
 	INCR = 1,
 	DECR = 1,
+	INCRBY = 2,
+	DECRBY = 2,
 	--
 	RPUSH = 2,
 	LPUSH = 2,
@@ -522,6 +635,8 @@ local COMMAND_ARGC = {
 	LLEN = 1,
 	LINDEX = 2,
 	LRANGE = 3,
+	LTRIM = 3,
+	LSET = 3,
 	--
 	HGET = 2,
 	HSET = 3,
@@ -577,8 +692,13 @@ local function handler(skt)
 		else
 			ret = RESP.error("ERROR: command not found")
 		end
-		if tag ~= nil and cmd == "SELECT" then
-			page = tag
+		if tag ~= nil then
+			if cmd == "SELECT" then
+				page = tag
+			elseif cmd == "QUIT" then
+				skt:close()
+				return
+			end
 		end
 		if shutdown then skt:close(); break end
 		skt:send(ret)
