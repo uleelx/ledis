@@ -115,7 +115,7 @@ RESP = {
 		return string_format("$%d\r\n%s\r\n", #tostring(s), s)
 	end,
 	array = function (t, length)
-		length = length or #t
+		length = length or (t and #t or 0)
 		local ret = {"*"..length.."\r\n"}
 		for i = 1, length do
 			local v = t[i]
@@ -560,7 +560,7 @@ local cmd_hashes = {
 			end
 			return RESP.array(glue.keys(db[page][key]))
 		end
-		return RESP.array({})
+		return RESP.array(nil)
 	end,
 	HVALS = function(page, key)
 		local ret = {}
@@ -586,13 +586,123 @@ local cmd_hashes = {
 	end
 }
 
+local cmd_sets
+cmd_sets = {
+	SADD = function(page, key, ...)
+		if not db[page][key] then
+			db[page][key] = {}
+		end
+		if type(db[page][key]) ~= "table" then
+			return RESP.error("ERROR: set required")
+		end
+		local c = 0
+		for _, member in ipairs{...} do
+			if not db[page][key][member] then
+				db[page][key][member] = true
+				c = c + 1
+			end
+		end
+		return RESP.integer(c)
+	end,
+	SREM = function(page, key, ...)
+		local c = 0
+		if db[page][key] then
+			if type(db[page][key]) ~= "table" then
+				return RESP.error("ERROR: set required")
+			end
+			for _, member in ipairs{...} do
+				if db[page][key][member] then
+					db[page][key][member] = nil
+					c = c + 1
+				end
+			end
+		end
+		return RESP.integer(c)
+	end,
+	SISMEMBER = function(page, key, member)
+		return RESP.integer((db[page][key] and db[page][key][member]) and 1 or 0)
+	end,
+	SCARD = function(page, key)
+		return cmd_hashes.HLEN(page, key)
+	end,
+	SINTER = function(page, key, ...)
+		local ret = glue.merge({}, db[page][key])
+		if type(ret) == "table" then
+			for i, key in ipairs{...} do
+				if type(db[page][key]) ~= "table" then
+					return RESP.array()
+				end
+				local tmp = {}
+				for member in pairs(ret) do
+					tmp[member] = db[page][key][member]
+				end
+				ret = tmp
+			end
+		end
+		return RESP.array(ret and glue.keys(ret))
+	end,
+	SMEMBERS = function(page, key)
+		return cmd_sets.SINTER(page, key)
+	end,
+	SUNION = function(page, ...)
+		local ret = {}
+		for _, key in ipairs{...} do
+			if type(db[page][key]) == "table" then
+				for member in pairs(db[page][key]) do
+					ret[member] = true
+				end
+			end
+		end
+		return RESP.array(glue.keys(ret))
+	end,
+	SDIFF = function(page, key, ...)
+		local ret = glue.merge({}, db[page][key])
+		if type(ret) == "table" then
+			for _, key in ipairs{...} do
+				if type(db[page][key]) == "table" then
+					for member in pairs(db[page][key]) do
+						ret[member] = nil
+					end
+				end
+			end
+		end
+		return RESP.array(ret and glue.keys(ret))
+	end,
+	SRANDMEMBER = function(page, key, count)
+		if count then
+			if type(db[page][key]) == "table" then
+				count = tonumber(count)
+				local ret = {}
+				if count > 0 then
+					for member in pairs(db[page][key]) do
+						ret[#ret + 1] = member
+						count = count - 1
+						if count == 0 then break end
+					end
+				elseif count < 0 then
+					count = math.abs(count)
+					local all = glue.keys(db[page][key])
+					for i = 1, count do
+						ret[#ret + 1] = all[math.random(#all)]
+					end
+				end
+				return RESP.array(ret)
+			end
+			return RESP.array()
+		end
+		return RESP.bulk_string(db[page][key] and (next(db[page][key])))
+	end
+}
+
+
 local COMMANDS = glue.merge({},
 	cmd_server,
 	cmd_connection,
 	cmd_keys,
 	cmd_strings,
 	cmd_lists,
-	cmd_hashes
+	cmd_hashes,
+	cmd_sets
 )
 
 local COMMAND_ARGC = {
@@ -648,7 +758,17 @@ local COMMAND_ARGC = {
 	HGETALL = 1,
 	HKEYS = 1,
 	HVALS = 1,
-	HINCRBY = 3
+	HINCRBY = 3,
+	--
+	SADD = 2,
+	SREM = 2,
+	SISMEMBER = 2,
+	SCARD = 1,
+	SINTER = 1,
+	SMEMBERS = 1,
+	SUNION = 1,
+	SDIFF = 1,
+	SRANDMEMBER = 1
 }
 
 --~~~~~~~~~~~~~~~~~~~~~~
