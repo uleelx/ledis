@@ -19,10 +19,38 @@ if not db.expire then
 	db.expire = {[0] = {}, size = 0}
 end
 
-local expire = db.expire
-
 local shutdown = false
 --~~~~~~~~~~~~~~~~~~~~~~
+
+-- common functions
+--======================
+
+local function start_stop(start, stop, size)
+	start, stop = tonumber(start), tonumber(stop)
+	if start < 0 then start = start + size end
+	if start < 0 then start = 0 end
+	start = start + 1
+
+	if stop < 0 then stop = stop + size end
+	if stop < 0 then stop = 0 end
+	if stop > size - 1 then stop = size - 1 end
+	stop = stop + 1
+
+	return start, stop
+end
+
+local function get_sorted_keys_by_values(t)
+	return glue.keys(t, function(k1, k2)
+		if t[k1] == t[k2] then
+			return k1 < k2
+		else
+			return t[k1] < t[k2]
+		end
+	end)
+end
+
+--~~~~~~~~~~~~~~~~~~~~~~
+
 
 -- bulletin board stuff for blocking commands
 --======================
@@ -65,8 +93,9 @@ end
 --~~~~~~~~~~~~~~~~~~~~~~
 
 
--- define redis stuff
+-- define keys expiring stuff
 --======================
+local expire = db.expire
 
 local function check_expired(page, key)
 	if not key then return false end
@@ -98,6 +127,11 @@ local function launch_expire()
 		end
 	end
 end
+--~~~~~~~~~~~~~~~~~~~~~~
+
+
+-- define redis stuff
+--======================
 
 local RESP
 RESP = {
@@ -423,16 +457,7 @@ cmd_lists = {
 			return RESP.error("ERROR: list required")
 		end
 		local t = db[page][key]
-		start, stop = tonumber(start), tonumber(stop)
-		if start >= #t then return "*0\r\n" end
-		if start < 0 then start = #t + start end
-		if start < 0 then start = 0 end
-		start = start + 1
-		if stop > #t - 1 then stop = #t - 1 end
-		if stop < 0 then stop = #t + stop end
-		if stop < 0 then stop = 0 end
-		stop = stop + 1
-		if start > stop then start, stop = stop, start end
+		start, stop = start_stop(start, stop, #t)
 		local ret = {}
 		for i = start, stop do
 			ret[#ret + 1] = t[i]
@@ -694,6 +719,63 @@ cmd_sets = {
 	end
 }
 
+local cmd_sorted_sets = {
+	ZADD = function(page, key, ...)
+		if not db[page][key] then
+			db[page][key] = {}
+		end
+		if type(db[page][key]) ~= "table" then
+			return RESP.error("ERROR: sorted set required")
+		end
+		local c = 0
+		for i = 1, select("#", ...), 2 do
+			local score, member = select(i, ...)
+			if not db[page][key][member] then
+				c = c + 1
+			end
+			db[page][key][member] = tonumber(score)
+		end
+		return RESP.integer(c)
+	end,
+	ZREM = cmd_sets.SREM,
+	ZSCORE = function(page, key, member)
+		return RESP.bulk_string(db[page][key] and db[page][key][member])
+	end,
+	ZCARD = cmd_sets.SCARD,
+	ZRANGE = function(page, key, start, stop, WITHSCORES)
+		if type(db[page][key]) == "table" then
+			local members = get_sorted_keys_by_values(db[page][key])
+			local ret = {}
+			start, stop = start_stop(start, stop, #members)
+			for i = start, stop do
+				table_insert(ret, members[i])
+				if WITHSCORES == "WITHSCORES" then
+					table_insert(ret, db[page][key][members[i]])
+				end
+			end
+			return RESP.array(ret)
+		end
+		return RESP.array()
+	end,
+	ZRANK = function(page, key, member)
+		if type(db[page][key]) == "table" and db[page][key][member] then
+			local members = get_sorted_keys_by_values(db[page][key])
+			return RESP.integer(glue.index(members)[member] - 1)
+		end
+		return RESP.bulk_string(nil)
+	end,
+	ZINCRBY = function(page, key, increment, member)
+		if not db[page][key] then
+			db[page][key] = {}
+		end
+		if type(db[page][key]) ~= "table" then
+			return RESP.error("ERROR: sorted set required")
+		end
+		db[page][key][member] = (tonumber(db[page][key][member]) or 0) + increment
+		return RESP.bulk_string(db[page][key][member])
+	end
+}
+
 
 local COMMANDS = glue.merge({},
 	cmd_server,
@@ -702,7 +784,8 @@ local COMMANDS = glue.merge({},
 	cmd_strings,
 	cmd_lists,
 	cmd_hashes,
-	cmd_sets
+	cmd_sets,
+	cmd_sorted_sets
 )
 
 local COMMAND_ARGC = {
@@ -768,7 +851,15 @@ local COMMAND_ARGC = {
 	SMEMBERS = 1,
 	SUNION = 1,
 	SDIFF = 1,
-	SRANDMEMBER = 1
+	SRANDMEMBER = 1,
+	--
+	ZADD = 3,
+	ZREM = 2,
+	ZSCORE = 2,
+	ZCARD = 1,
+	ZRANGE = 3,
+	ZRANK = 2,
+	ZINCRBY = 3
 }
 
 --~~~~~~~~~~~~~~~~~~~~~~
