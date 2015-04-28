@@ -39,13 +39,9 @@ local function start_stop(start, stop, size)
 	return start, stop
 end
 
-local function get_sorted_keys_by_values(t)
+local function get_sorted_keys_by_values(t, rev)
 	return glue.keys(t, function(k1, k2)
-		if t[k1] == t[k2] then
-			return k1 < k2
-		else
-			return t[k1] < t[k2]
-		end
+		return (t[k1] == t[k2] and k1 <= k2 or t[k1] < t[k2]) == not rev
 	end)
 end
 
@@ -719,7 +715,8 @@ cmd_sets = {
 	end
 }
 
-local cmd_sorted_sets = {
+local cmd_sorted_sets
+cmd_sorted_sets = {
 	ZADD = function(page, key, ...)
 		if not db[page][key] then
 			db[page][key] = {}
@@ -742,9 +739,9 @@ local cmd_sorted_sets = {
 		return RESP.bulk_string(db[page][key] and db[page][key][member])
 	end,
 	ZCARD = cmd_sets.SCARD,
-	ZRANGE = function(page, key, start, stop, WITHSCORES)
+	ZRANGE = function(page, key, start, stop, WITHSCORES, rev)
 		if type(db[page][key]) == "table" then
-			local members = get_sorted_keys_by_values(db[page][key])
+			local members = get_sorted_keys_by_values(db[page][key], rev)
 			local ret = {}
 			start, stop = start_stop(start, stop, #members)
 			for i = start, stop do
@@ -757,12 +754,18 @@ local cmd_sorted_sets = {
 		end
 		return RESP.array()
 	end,
-	ZRANK = function(page, key, member)
+	ZREVRANGE = function(page, key, start, stop, WITHSCORES)
+		return cmd_sorted_sets.ZRANGE(page, key, start, stop, WITHSCORES, true)
+	end,
+	ZRANK = function(page, key, member, rev)
 		if type(db[page][key]) == "table" and db[page][key][member] then
-			local members = get_sorted_keys_by_values(db[page][key])
+			local members = get_sorted_keys_by_values(db[page][key], rev)
 			return RESP.integer(glue.index(members)[member] - 1)
 		end
 		return RESP.bulk_string(nil)
+	end,
+	ZREVRANK = function(page, key, member)
+		return cmd_sorted_sets.ZRANK(page, key, member, true)
 	end,
 	ZINCRBY = function(page, key, increment, member)
 		if not db[page][key] then
@@ -858,7 +861,9 @@ local COMMAND_ARGC = {
 	ZSCORE = 2,
 	ZCARD = 1,
 	ZRANGE = 3,
+	ZREVRANGE = 3,
 	ZRANK = 2,
+	ZREVRANK = 2,
 	ZINCRBY = 3
 }
 
