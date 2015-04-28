@@ -19,7 +19,10 @@ if not db.expire then
 	db.expire = {[0] = {}, size = 0}
 end
 
+local pubsub = glue.autotable()
+
 local shutdown = false
+
 --~~~~~~~~~~~~~~~~~~~~~~
 
 -- common functions
@@ -779,6 +782,36 @@ cmd_sorted_sets = {
 	end
 }
 
+local cmd_pubsub = {
+	SUBSCRIBE = function(skt, ...)
+		local ret = {}
+		for _, channel in ipairs{...} do
+			pubsub[skt][channel] = true
+			pubsub[channel][skt] = true
+			table_insert(ret, RESP.array{"subscribe", channel, glue.count(pubsub[skt])})
+		end
+		return table_concat(ret)
+	end,
+	UNSUBSCRIBE = function(skt, ...)
+		local ret = {}
+		local channels = (...) and {...} or glue.keys(pubsub[skt])
+		for _, channel in ipairs(channels) do
+			pubsub[skt][channel] = nil
+			pubsub[channel][skt] = nil
+			table_insert(ret, RESP.array{"unsubscribe", channel, glue.count(pubsub[skt])})
+		end
+		return table_concat(ret)
+	end,
+	PUBLISH = function(_, channel, message)
+		local c = 0
+		for skt in pairs(pubsub[channel]) do
+			if skt:send(RESP.array{"message", channel, message}) then
+				c = c + 1
+			end
+		end
+		return RESP.integer(c)
+	end
+}
 
 local COMMANDS = glue.merge({},
 	cmd_server,
@@ -788,7 +821,8 @@ local COMMANDS = glue.merge({},
 	cmd_lists,
 	cmd_hashes,
 	cmd_sets,
-	cmd_sorted_sets
+	cmd_sorted_sets,
+	cmd_pubsub
 )
 
 local COMMAND_ARGC = {
@@ -864,7 +898,11 @@ local COMMAND_ARGC = {
 	ZREVRANGE = 3,
 	ZRANK = 2,
 	ZREVRANK = 2,
-	ZINCRBY = 3
+	ZINCRBY = 3,
+	--
+	SUBSCRIBE = 1,
+	UNSUBSCRIBE = 0,
+	PUBLISH = 2
 }
 
 --~~~~~~~~~~~~~~~~~~~~~~
@@ -890,30 +928,38 @@ local function get_args(skt)
 	return args
 end
 
+local function do_commands(skt, page, cmd, args)
+	local ret, tag
+	if COMMANDS[cmd] then
+		if #args >= COMMAND_ARGC[cmd] then
+			if cmd == "SUBSCRIBE" or cmd == "UNSUBSCRIBE" then
+				ret = COMMANDS[cmd](skt, unpack(args))
+			else
+				check_expired(page, args[1])
+				ret, tag = COMMANDS[cmd](page, unpack(args))
+			end
+		else
+			ret = RESP.error("ERROR: not enough arguments")
+		end
+	else
+		ret = RESP.error("ERROR: command not found")
+	end
+	return ret, tag
+end
+
 local function handler(skt)
 	local page = 0
 	while true do
 		if expire.size > 320 then launch_expire() end
-		local ret, tag
 		local args = get_args(skt)
 		if not args then break end
 		local cmd = string_upper(table_remove(args, 1))
-		if COMMANDS[cmd] then
-			if #args >= COMMAND_ARGC[cmd] then
-				check_expired(page, args[1])
-				ret, tag = COMMANDS[cmd](page, unpack(args))
-			else
-				ret = RESP.error("ERROR: wrong argument numbers")
-			end
-		else
-			ret = RESP.error("ERROR: command not found")
-		end
+		local ret, tag = do_commands(skt, page, cmd, args)
 		if tag ~= nil then
 			if cmd == "SELECT" then
 				page = tag
 			elseif cmd == "QUIT" then
-				skt:close()
-				return
+				skt:close(); break
 			end
 		end
 		if shutdown then skt:close(); break end
