@@ -485,7 +485,8 @@ cmd_lists = {
 	end
 }
 
-local cmd_hashes = {
+local cmd_hashes
+cmd_hashes = {
 	HGET = function(page, key, field)
 		if db[page][key] and db[page][key][field] then
 			if type(db[page][key]) ~= "table" then
@@ -496,7 +497,7 @@ local cmd_hashes = {
 			return RESP.bulk_string(nil)
 		end
 	end,
-	HSET = function(page, key, field, value)
+	HSET = function(page, key, field, value, NX)
 		if not db[page][key] then
 			db[page][key] = {}
 		end
@@ -504,8 +505,11 @@ local cmd_hashes = {
 			return RESP.error("ERROR: hash required")
 		end
 		local ret = db[page][key][field] and 0 or 1
-		db[page][key][field] = value
+		if ret == 1 or not NX then db[page][key][field] = value end
 		return RESP.integer(ret)
+	end,
+	HSETNX = function(page, key, field, value)
+		return cmd_hashes.HSET(page, key, field, value, true)
 	end,
 	HMGET = function(page, key, ...)
 		local length = select("#", ...)
@@ -870,6 +874,7 @@ local COMMAND_ARGC = {
 	--
 	HGET = 2,
 	HSET = 3,
+	HSETNX = 3,
 	HMGET = 2,
 	HMSET = 3,
 	HEXISTS = 2,
