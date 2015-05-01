@@ -28,7 +28,6 @@ Dependencies
 =======
 
 - [pp](https://github.com/luapower/pp)
-- [lfs](http://keplerproject.github.io/luafilesystem)
 - [socketloop](https://github.com/luapower/socketloop)
 - [socket](https://github.com/diegonehab/luasocket)
 - [glue](https://github.com/luapower/glue)

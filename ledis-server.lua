@@ -11,7 +11,7 @@ local unpack = unpack or table.unpack
 
 -- initialize everything
 --======================
-local db = assert(flatdb("./db"))
+local db = flatdb("./db")
 
 if not db[0] then
 	db[0] = {}
