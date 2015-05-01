@@ -57,17 +57,11 @@ end
 
 -- bulletin board stuff for blocking commands
 --======================
-local board = {}
+local board = glue.autotable()
 
 local function reg(page, ...)
 	local thread = loop.current()
-	if not board[page] then
-		board[page] = {}
-	end
 	for _, key in ipairs{...} do
-		if not board[page][key] then
-			board[page][key] = {}
-		end
 		table_insert(board[page][key], thread)
 	end
 	return loop.suspend()
@@ -86,11 +80,9 @@ local function unreg(page, ...)
 end
 
 local function wake(page, key, n)
-	if board[page] and type(board[page][key]) == "table" then
-		for i = 1, n do
-			if not next(board[page][key]) then break end
-			loop.resume(table_remove(board[page][key], 1), key)
-		end
+	for i = 1, n do
+		if not next(board[page][key]) then break end
+		loop.resume(table_remove(board[page][key], 1), key)
 	end
 end
 --~~~~~~~~~~~~~~~~~~~~~~
