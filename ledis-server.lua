@@ -220,10 +220,11 @@ local cmd_server = {
 	end,
 	FLUSHALL = function()
 		for page in pairs(db) do
-			db[page] = {}
+			if tonumber(page) then
+				db[page] = {}
+				expire[page] = {}
+			end
 		end
-		expire = db.expire
-		expire[0] = {}
 		return "OK", RESP.simple_string
 	end
 }
@@ -243,8 +244,6 @@ local cmd_connection = {
 		if index and index < 16 then
 			if not db[index] then
 				db[index] = {}
-			end
-			if not expire[index] then
 				expire[index] = {}
 			end
 			return "OK", RESP.simple_string, index
@@ -261,10 +260,8 @@ local cmd_keys = {
 		for i, v in ipairs(args) do
 			if db[page][v] then
 				db[page][v] = nil
-				c = c + 1
-			end
-			if expire[page][v] then
 				expire[page][v] = nil
+				c = c + 1
 			end
 		end
 		if #args == 1 then
@@ -335,11 +332,7 @@ cmd_strings = {
 	end,
 	SET = function(page, key, value, EX, seconds)
 		db[page][key] = value
-		if EX == nil then
-			expire[page][key] = nil
-		else
-			expire[page][key] = os.time() + tonumber(seconds)
-		end
+		expire[page][key] = EX and (os.time() + tonumber(seconds)) or nil
 		return "OK", RESP.simple_string
 	end,
 	GETSET = function(page, key, value)
