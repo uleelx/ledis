@@ -18,7 +18,7 @@ if not db[0] then
 end
 
 if not db.expire then
-	db.expire = {[0] = {}, size = 0}
+	db.expire = {[0] = {}}
 end
 
 local loaded_scripts = {}
@@ -99,13 +99,13 @@ end
 -- define keys expiring stuff
 --======================
 local expire = db.expire
+local last_expire_time = os.time()
 
 local function check_expired(page, key)
 	if not key then return false end
 	if expire[page][key] and expire[page][key] < os.time() then
 		db[page][key] = nil
 		expire[page][key] = nil
-		expire.size = expire.size - 1
 		return true
 	end
 	return false
@@ -223,7 +223,6 @@ local cmd_server = {
 	end,
 	FLUSHDB = function(page)
 		db[page] = {}
-		expire.size = expire.size - glue.count(expire[page])
 		expire[page] = {}
 		return "OK", RESP.simple_string
 	end,
@@ -233,7 +232,6 @@ local cmd_server = {
 		end
 		expire = db.expire
 		expire[0] = {}
-		expire.size = 0
 		return "OK", RESP.simple_string
 	end
 }
@@ -275,7 +273,6 @@ local cmd_keys = {
 			end
 			if expire[page][v] then
 				expire[page][v] = nil
-				expire.size = expire.size - 1
 			end
 		end
 		if #args == 1 then
@@ -298,7 +295,6 @@ local cmd_keys = {
 	EXPIRE = function(page, key, seconds)
 		if db[page][key] then
 			expire[page][key] = os.time() + tonumber(seconds)
-			expire.size = expire.size + 1
 			return 1, RESP.integer
 		else
 			return 0, RESP.integer
@@ -349,9 +345,7 @@ cmd_strings = {
 		db[page][key] = value
 		if EX == nil then
 			expire[page][key] = nil
-			if expire[page][key] then expire.size = expire.size - 1 end
 		else
-			if not expire[page][key] then expire.size = expire.size + 1 end
 			expire[page][key] = os.time() + tonumber(seconds)
 		end
 		return "OK", RESP.simple_string
@@ -378,7 +372,6 @@ cmd_strings = {
 	end,
 	SETEX = function(page, key, seconds, value)
 		db[page][key] = value
-		if not expire[page][key] then expire.size = expire.size + 1 end
 		expire[page][key] = os.time() + tonumber(seconds)
 		return "OK", RESP.simple_string
 	end,
@@ -1079,7 +1072,10 @@ end
 local function handler(skt)
 	local page = 0
 	while true do
-		if expire.size > 320 then launch_expire() end
+		if last_expire_time - os.time() > 1 then
+			last_expire_time = os.time()
+			launch_expire()
+		end
 		local args = get_args(skt)
 		if not args then break end
 		local cmd = string_upper(table_remove(args, 1))
