@@ -195,7 +195,8 @@ local function do_commands(skt, page, cmd, args)
 	return ret, r, tag
 end
 
-local cmd_server = {
+local cmd_server
+cmd_server = {
 	SAVE = function()
 		if db:save() then
 			return "OK", RESP.simple_string
@@ -229,7 +230,8 @@ local cmd_server = {
 	end
 }
 
-local cmd_connection = {
+local cmd_connection
+cmd_connection = {
 	ECHO = function(page, message)
 		return message, RESP.bulk_string
 	end,
@@ -253,7 +255,8 @@ local cmd_connection = {
 	end
 }
 
-local cmd_keys = {
+local cmd_keys
+cmd_keys = {
 	DEL = function(page, ...)
 		local c = 0
 		local args = {...}
@@ -815,7 +818,8 @@ cmd_sorted_sets = {
 	end
 }
 
-local cmd_pubsub = {
+local cmd_pubsub
+cmd_pubsub = {
 	SUBSCRIBE = function(skt, ...)
 		local ret = {}
 		for _, channel in ipairs{...} do
@@ -1070,12 +1074,13 @@ local function handler(skt)
 			if cmd == "SELECT" then
 				page = tag
 			elseif cmd == "QUIT" then
-				skt:close(); break
+				break
 			end
 		end
-		if shutdown then skt:close(); break end
+		if shutdown then break end
 		skt:send(ret)
 	end
+	skt:close()
 end
 
 loop.newserver("*", 6379, handler)
