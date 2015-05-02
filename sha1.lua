@@ -13,6 +13,7 @@ local strchar = string.char
 local strbyte = string.byte
 local strsub  = string.sub
 local floor   = math.floor
+local bit     = bit or bit32
 local bnot    = bit.bnot
 local band    = bit.band
 local bor     = bit.bor
