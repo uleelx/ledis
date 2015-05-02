@@ -1,13 +1,16 @@
 local loop = require("socketloop")
 local glue = require("glue")
 local flatdb = require("flatdb")
-local sha1 = require("sha1")
+local sha1 = require("sha1").sha1
 
-local string_sub, string_format = string.sub, string.format
-local string_upper, string_lower = string.upper, string.lower
-local string_find, string_gsub = string.find, string.gsub
+local pairs, ipairs, next, type, tostring, tonumber, error, pcall, select =
+	pairs, ipairs, next, type, tostring, tonumber, error, pcall, select
+local math_floor, math_abs, math_random = math.floor, math.abs, math.random
+local string_sub, string_format, string_upper, string_lower, string_find, string_gsub =
+	string.sub, string.format, string.upper, string.lower, string.find, string.gsub
 local table_remove, table_concat, table_insert = table.remove, table.concat, table.insert
 local unpack = unpack or table.unpack
+local os_time = os.time
 
 -- initialize everything
 --======================
@@ -91,11 +94,11 @@ end
 -- define keys expiring stuff
 --======================
 local expire = db.expire
-local last_expire_time = os.time()
+local last_expire_time = os_time()
 
 local function check_expired(page, key)
 	if not key then return false end
-	if expire[page][key] and expire[page][key] < os.time() then
+	if expire[page][key] and expire[page][key] < os_time() then
 		db[page][key] = nil
 		expire[page][key] = nil
 		return true
@@ -113,7 +116,7 @@ local function launch_expire()
 				for i = 1, 20 do
 					key = next(keyspace, key)
 					if key == nil then break end
-					tmp[#tmp + 1] = key
+					table_insert(tmp, key)
 				end
 				for _, key in ipairs(tmp) do
 					expired = expired + (check_expired(page, key) and 1 or 0)
@@ -155,7 +158,7 @@ RESP = {
 	auto = function(o)
 		local tp = type(o)
 		if tp == "number" then
-			if math.floor(o) == o then
+			if math_floor(o) == o then
 				return RESP.integer(o)
 			else
 				return RESP.bulk_string(o)
@@ -286,7 +289,7 @@ cmd_keys = {
 	end,
 	EXPIRE = function(page, key, seconds)
 		if db[page][key] then
-			expire[page][key] = os.time() + tonumber(seconds)
+			expire[page][key] = os_time() + tonumber(seconds)
 			return 1, RESP.integer
 		else
 			return 0, RESP.integer
@@ -295,7 +298,7 @@ cmd_keys = {
 	TTL = function(page, key)
 		if db[page][key] then
 			if expire[page][key] then
-				return (expire[page][key] - os.time()), RESP.integer
+				return (expire[page][key] - os_time()), RESP.integer
 			else
 				return -1, RESP.integer
 			end
@@ -321,7 +324,7 @@ cmd_keys = {
 		local ret = {}
 		for k in pairs(db[page]) do
 			if string_find(k, pattern) and check_expired(page, k) == false then
-				ret[#ret + 1] = k
+				table_insert(ret, k)
 			end
 		end
 		return ret, RESP.array
@@ -335,7 +338,7 @@ cmd_strings = {
 	end,
 	SET = function(page, key, value, EX, seconds)
 		db[page][key] = value
-		expire[page][key] = EX and (os.time() + tonumber(seconds)) or nil
+		expire[page][key] = EX and (os_time() + tonumber(seconds)) or nil
 		return "OK", RESP.simple_string
 	end,
 	GETSET = function(page, key, value)
@@ -360,7 +363,7 @@ cmd_strings = {
 	end,
 	SETEX = function(page, key, seconds, value)
 		db[page][key] = value
-		expire[page][key] = os.time() + tonumber(seconds)
+		expire[page][key] = os_time() + tonumber(seconds)
 		return "OK", RESP.simple_string
 	end,
 	INCR = function(page, key)
@@ -489,7 +492,7 @@ cmd_lists = {
 		start, stop = start_stop(start, stop, #t)
 		local ret = {}
 		for i = start, stop do
-			ret[#ret + 1] = t[i]
+			table_insert(ret, t[i])
 		end
 		if trim then return ret end
 		return ret, RESP.array
@@ -735,15 +738,15 @@ cmd_sets = {
 				local ret = {}
 				if count > 0 then
 					for member in pairs(db[page][key]) do
-						ret[#ret + 1] = member
+						table_insert(ret, member)
 						count = count - 1
 						if count == 0 then break end
 					end
 				elseif count < 0 then
-					count = math.abs(count)
+					count = math_abs(count)
 					local all = glue.keys(db[page][key])
 					for i = 1, count do
-						ret[#ret + 1] = all[math.random(#all)]
+						table_insert(ret, all[math_random(#all)])
 					end
 				end
 				return ret, RESP.array
@@ -853,7 +856,7 @@ cmd_pubsub = {
 local cmd_scripting
 cmd_scripting = {
 	EVAL = function(page, script, numkeys, ...)
-		local sha1hex = sha1.sha1(script)
+		local sha1hex = sha1(script)
 		if not loaded_scripts[sha1hex] then
 			loaded_scripts[sha1hex] = script
 		end
@@ -920,7 +923,7 @@ cmd_scripting = {
 	SCRIPT = function(page, cmd, script, ...)
 		cmd = string_upper(cmd)
 		if cmd == "LOAD" then
-			local sha1hex = sha1.sha1(script)
+			local sha1hex = sha1(script)
 			loaded_scripts[sha1hex] = script
 			return sha1hex, RESP.bulk_string
 		elseif cmd == "FLUSH" then
@@ -1053,7 +1056,7 @@ local function get_args(skt)
 		if not tmp or string_sub(tmp, 1, 1) ~= "$" then return nil end
 		tmp = string_sub(tmp, 2)
 		tmp = skt:receive(tonumber(tmp))
-		args[#args + 1] = tmp
+		table_insert(args, tmp)
 	end
 	return args
 end
@@ -1061,8 +1064,8 @@ end
 local function handler(skt)
 	local page = 0
 	while true do
-		if last_expire_time - os.time() > 1 then
-			last_expire_time = os.time()
+		if last_expire_time - os_time() > 1 then
+			last_expire_time = os_time()
 			launch_expire()
 		end
 		local args = get_args(skt)
