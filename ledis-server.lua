@@ -1,6 +1,7 @@
-local loop = require("socketloop")
-local glue = require("glue")
+local mp = require("MessagePack")
 local flatdb = require("flatdb")
+local glue = require("glue")
+local loop = require("socketloop")
 local sha1 = require("sha1").sha1
 
 local pairs, ipairs, next, type, tostring, tonumber, error, pcall, select =
@@ -894,12 +895,14 @@ cmd_scripting = {
 			end,
 			error_reply = function(error_string)
 				return {err = error_string}
-			end
+			end,
+			sha1hex = sha1
 		}
 		local chunk, err = load(script, "redis_script.lua", "t", glue.merge({
 			KEYS = KEYS,
 			ARGV = ARGV,
-			redis = redis
+			redis = redis,
+			cmsgpack = mp
 		}, _G))
 		if chunk then
 			local ret = {pcall(chunk)}

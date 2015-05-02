@@ -1,11 +1,13 @@
 Ledis
 ===========
 
-Ledis is a redis server replacement which provides a very small subset of Redis commands.<br>
+Ledis is an alternative of Redis server which provides a subset of Redis commands.<br>
 It uses [FlatDB](https://github.com/uleelx/FlatDB) as the database backend that persists on disk.
 
 Usage
 ==========
+
+Ledis runs very well on LuaJIT 2.1(recommended) and it supports Lua 5.1 to Lua 5.3 though.
 
 Run this:
 ```
@@ -20,19 +22,17 @@ Ledis is still in its early stage. It means it may be so buggy that you **SHOULD
 
 TODO
 ==========
-- More tests required
-- Implement more commands
-- Make it robust enough to serve for productions
+- More tests
+- More commands
+- Make it robust enough for production environment
 
 Dependencies
 =======
 
-- [pp](https://github.com/luapower/pp)
-- [socketloop](https://github.com/luapower/socketloop)
+- [lua-MessagePack](https://github.com/fperrad/lua-MessagePack)
 - [socket](https://github.com/diegonehab/luasocket)
+- [socketloop](https://github.com/luapower/socketloop)
 - [glue](https://github.com/luapower/glue)
-
-All above libraries can be found on [LuaPower](https://luapower.com/).
 
 License
 =======
