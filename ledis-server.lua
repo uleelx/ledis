@@ -52,7 +52,7 @@ end
 
 local function get_sorted_keys_by_values(t, rev)
 	return glue.keys(t, function(k1, k2)
-		return (t[k1] == t[k2] and k1 <= k2 or t[k1] < t[k2]) == not rev
+		return (t[k1] == t[k2] and k1 <= k2 or tonumber(t[k1]) < tonumber(t[k2])) == not rev
 	end)
 end
 
@@ -263,19 +263,14 @@ local cmd_keys
 cmd_keys = {
 	DEL = function(page, ...)
 		local c = 0
-		local args = {...}
-		for i, v in ipairs(args) do
+		for _, v in ipairs{...} do
 			if db[page][v] then
 				db[page][v] = nil
 				expire[page][v] = nil
 				c = c + 1
 			end
 		end
-		if #args == 1 then
-			return "OK", RESP.simple_string
-		else
-			return c, RESP.integer
-		end
+		return c, RESP.integer
 	end,
 	EXISTS = function(page, key)
 		return (db[page][key] and 1 or 0), RESP.integer
@@ -418,7 +413,9 @@ cmd_lists = {
 			if type(db[page][key]) ~= "table" then
 				return "ERROR: list required", RESP.error
 			end
-			return table_remove(db[page][key]), RESP.bulk_string
+			local ret = table_remove(db[page][key])
+			if #db[page][key] == 0 then cmd_keys.DEL(page, key) end
+			return ret, RESP.bulk_string
 		else
 			return false, RESP.bulk_string
 		end
@@ -433,20 +430,26 @@ cmd_lists = {
 					return "ERROR: list required", RESP.error
 				end
 				if next(db[page][key]) then
-					return {key, table_remove(db[page][key])}, RESP.array
+					local ret = {key, table_remove(db[page][key])}
+					if #db[page][key] == 0 then cmd_keys.DEL(page, key) end
+					return ret, RESP.array
 				end
 			end
 		end
 		local key = reg(page, unpack(keys))
 		unreg(page, unpack(keys))
-		return {key, table_remove(db[page][key])}, RESP.array
+		local ret = {key, table_remove(db[page][key])}
+		if #db[page][key] == 0 then cmd_keys.DEL(page, key) end
+		return ret, RESP.array
 	end,
 	LPOP = function(page, key)
 		if db[page][key] then
 			if type(db[page][key]) ~= "table" then
 				return "ERROR: list required", RESP.error
 			end
-			return table_remove(db[page][key], 1), RESP.bulk_string
+			local ret = table_remove(db[page][key], 1)
+			if #db[page][key] == 0 then cmd_keys.DEL(page, key) end
+			return ret, RESP.bulk_string
 		else
 			return false, RESP.bulk_string
 		end
@@ -461,13 +464,17 @@ cmd_lists = {
 					return "ERROR: list required", RESP.error
 				end
 				if next(db[page][key]) then
-					return {key, table_remove(db[page][key], 1)}, RESP.array
+					local ret = {key, table_remove(db[page][key], 1)}
+					if #db[page][key] == 0 then cmd_keys.DEL(page, key) end
+					return ret, RESP.array
 				end
 			end
 		end
 		local key = reg(page, unpack(keys))
 		unreg(page, unpack(keys))
-		return {key, table_remove(db[page][key], 1)}, RESP.array
+		local ret = {key, table_remove(db[page][key], 1)}
+		if #db[page][key] == 0 then cmd_keys.DEL(page, key) end
+		return ret, RESP.array
 	end,
 	LLEN = function(page, key)
 		if type(db[page][key]) ~= "table" then
@@ -773,7 +780,7 @@ cmd_sorted_sets = {
 			if not db[page][key][member] then
 				c = c + 1
 			end
-			db[page][key][member] = tonumber(score)
+			db[page][key][member] = score
 		end
 		return c, RESP.integer
 	end,
@@ -817,7 +824,7 @@ cmd_sorted_sets = {
 		if type(db[page][key]) ~= "table" then
 			return "ERROR: sorted set required", RESP.error
 		end
-		db[page][key][member] = (tonumber(db[page][key][member]) or 0) + increment
+		db[page][key][member] = tostring((tonumber(db[page][key][member]) or 0) + increment)
 		return db[page][key][member], RESP.bulk_string
 	end
 }
