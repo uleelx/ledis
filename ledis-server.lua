@@ -52,7 +52,7 @@ end
 
 local function get_sorted_keys_by_values(t, rev)
 	return glue.keys(t, function(k1, k2)
-		return (t[k1] == t[k2] and k1 <= k2 or tonumber(t[k1]) < tonumber(t[k2])) == not rev
+		return (t[k1] == t[k2] and k1 <= k2 or t[k1] < t[k2]) == not rev
 	end)
 end
 
@@ -780,7 +780,7 @@ cmd_sorted_sets = {
 			if not db[page][key][member] then
 				c = c + 1
 			end
-			db[page][key][member] = score
+			db[page][key][member] = tonumber(score)
 		end
 		return c, RESP.integer
 	end,
@@ -797,7 +797,7 @@ cmd_sorted_sets = {
 			for i = start, stop do
 				table_insert(ret, members[i])
 				if WITHSCORES == "WITHSCORES" then
-					table_insert(ret, db[page][key][members[i]])
+					table_insert(ret, tostring(db[page][key][members[i]]))
 				end
 			end
 			return ret, RESP.array
@@ -824,7 +824,7 @@ cmd_sorted_sets = {
 		if type(db[page][key]) ~= "table" then
 			return "ERROR: sorted set required", RESP.error
 		end
-		db[page][key][member] = tostring((tonumber(db[page][key][member]) or 0) + increment)
+		db[page][key][member] = (tonumber(db[page][key][member]) or 0) + increment
 		return db[page][key][member], RESP.bulk_string
 	end
 }
