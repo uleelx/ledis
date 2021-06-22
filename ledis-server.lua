@@ -1096,6 +1096,18 @@ local function handler(skt)
 	skt:close()
 end
 
-loop.newserver("*", 6379, handler)
+local port = 6379
+
+if arg[1] == "--port" then
+	port = tonumber(arg[2])
+	if port == nil then
+		print("Configured to not listen anywhere, exiting.")
+		os.exit()
+	end
+end
+
+loop.newserver("*", port, handler)
+
+print("The server is now ready to accept connections on port " .. port)
 
 loop.start()
