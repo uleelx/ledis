@@ -7,30 +7,41 @@ It uses [FlatDB](https://github.com/uleelx/FlatDB) as the database backend that 
 Usage
 ==========
 
-Ledis runs very well on LuaJIT 2.1(recommended) and it supports Lua 5.1 to Lua 5.3 though.
+Ledis runs very well on LuaJIT 2.1(recommended) and it supports Lua 5.1 to Lua 5.4.x though.
 
-Run this:
+Run this with LuaJIT:
 ```
 $ luajit ledis-server.lua
 ```
+or this with Lua 5.1~5.4:
+```
+$ lua ledis-server.lua
+```
 
-Then it will listen to the TCP port 6379 and wait for Redis clients to connect.
+Then it will listen to the TCP port 6379 on 127.0.0.1 (by default) and wait for Redis clients to connect.
 
-Warning!!!
+Some options:
+```
+$ luajit ledis-server.lua --host 0.0.0.0
+$ luajit ledis-server.lua --port 6379
+```
+
+Benchmark
 ==========
-Ledis is still in its early stage. It means it may be so buggy that you **SHOULD NOT** use it in production now.
+Maybe it fits for local development or cases of low-load. Look at [this](benchmarks.md).
 
 TODO
 ==========
-- More tests
-- More commands
+Ledis is still in its early stage. It means it may be so buggy that you **SHOULD NOT** use it in production.
+- Improve performance
+- Implement more commands like AUTH
 - Make it robust enough for production environment
 
 Dependencies
 =======
 
 - [lua-MessagePack](https://framagit.org/fperrad/lua-MessagePack)
-- [socket](https://github.com/diegonehab/luasocket)
+- [LuaSocket(v3.0)](https://github.com/diegonehab/luasocket)
 - [socketloop](https://github.com/luapower/socketloop)
 - [glue](https://github.com/luapower/glue)
 

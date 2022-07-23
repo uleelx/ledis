@@ -1,3 +1,10 @@
+package.path = package.path..";./lua/?.lua"
+if _VERSION == "Lua 5.4" then
+	package.cpath = package.cpath..";./clib/?54.dll;./clib/?54.so"
+else
+	package.cpath = package.cpath..";./clib/?.dll;./clib/?.so"
+end
+
 local mp = require("MessagePack")
 local flatdb = require("flatdb")
 local glue = require("glue")
@@ -1057,16 +1064,20 @@ local function get_args(skt)
 	local args = {}
 	local tmp = skt:receive()
 	if tmp == "" then tmp = skt:receive() end
-	if not tmp or string_sub(tmp, 1, 1) ~= "*" then return nil end
-	tmp = string_sub(tmp, 2)
-	local argc = tonumber(tmp)
-	for i = 1, argc do
-		local tmp = skt:receive()
-		if tmp == "" then tmp = skt:receive() end
-		if not tmp or string_sub(tmp, 1, 1) ~= "$" then return nil end
+	if not tmp then return nil end
+	if string_sub(tmp, 1, 1) == "*" then
 		tmp = string_sub(tmp, 2)
-		tmp = skt:receive(tonumber(tmp))
-		table_insert(args, tmp)
+		local argc = tonumber(tmp)
+		for i = 1, argc do
+			local tmp = skt:receive()
+			if tmp == "" then tmp = skt:receive() end
+			if not tmp or string_sub(tmp, 1, 1) ~= "$" then return nil end
+			tmp = string_sub(tmp, 2)
+			tmp = skt:receive(tonumber(tmp))
+			table_insert(args, tmp)
+		end
+	else
+		args = glue.collect(glue.gsplit(tmp, " ", nil, true))
 	end
 	return args
 end
@@ -1096,7 +1107,12 @@ local function handler(skt)
 	skt:close()
 end
 
+local host = "127.0.0.1"
 local port = 6379
+
+if arg[1] == "--host" then
+	host = arg[2]
+end
 
 if arg[1] == "--port" then
 	port = tonumber(arg[2])
@@ -1106,8 +1122,8 @@ if arg[1] == "--port" then
 	end
 end
 
-loop.newserver("*", port, handler)
+loop.newserver(host, port, handler)
 
-print("The server is now ready to accept connections on port " .. port)
+print("The server is now ready to accept connections on "..host..":"..port)
 
 loop.start()

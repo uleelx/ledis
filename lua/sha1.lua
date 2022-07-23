@@ -8,12 +8,39 @@
 ---          stays intact.                    ---
 -------------------------------------------------
 
+if _VERSION == "Lua 5.4" then
+	bit_lua54 = load([[
+		local bit_lua54 = {
+			bnot = function (x)
+				return ~x
+			end,
+			band = function (x, y)
+				return x & y
+			end,
+			bor = function (x, y)
+				return x | y
+			end,
+			bxor = function (x, y)
+				return x ~ y
+			end,
+			shl = function (x, y)
+				return x << y
+			end,
+			shr = function (x, y)
+				return x >> y
+			end
+		}
+		return bit_lua54
+	]])()
+end
+
+
 local strlen  = string.len
 local strchar = string.char
 local strbyte = string.byte
 local strsub  = string.sub
 local floor   = math.floor
-local bit     = bit or bit32
+local bit     = bit or bit32 or bit_lua54
 local bnot    = bit.bnot
 local band    = bit.band
 local bor     = bit.bor
