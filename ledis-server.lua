@@ -19,6 +19,18 @@ local string_sub, string_format, string_upper, string_lower, string_find, string
 local table_remove, table_concat, table_insert = table.remove, table.concat, table.insert
 local unpack = unpack or table.unpack
 local os_time = os.time
+local autotable
+local auto_meta = {
+	__index = function(t, k)
+		t[k] = autotable()
+		return t[k]
+	end
+}
+autotable = function (t)
+	t = t or {}
+	setmetatable(t, auto_meta)
+	return t
+end
 
 -- initialize everything
 --======================
@@ -34,7 +46,7 @@ end
 
 local loaded_scripts = {}
 
-local pubsub = glue.autotable()
+local pubsub = autotable()
 
 local shutdown = false
 
@@ -68,7 +80,7 @@ end
 
 -- bulletin board stuff for blocking commands
 --======================
-local board = glue.autotable()
+local board = autotable()
 
 local function reg(page, ...)
 	local thread = loop.current()
