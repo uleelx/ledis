@@ -5,7 +5,7 @@ else
 	package.cpath = package.cpath..";./clib/?.dll;./clib/?.so"
 end
 
-local mp = require("MessagePack")
+local mp = require("msgpack")
 local flatdb = require("flatdb")
 local glue = require("glue")
 local loop = require("socketloop")
@@ -412,7 +412,7 @@ cmd_lists = {
 			table_insert(db[page][key], value)
 		end
 		wake(page, key, select("#", ...))
-		return #db[page][key], RESP.integer
+		return db[page][key] and #db[page][key] or 0, RESP.integer
 	end,
 	LPUSH = function(page, key, ...)
 		if not db[page][key] then
@@ -425,7 +425,7 @@ cmd_lists = {
 			table_insert(db[page][key], 1, value)
 		end
 		wake(page, key, select("#", ...))
-		return #db[page][key], RESP.integer
+		return db[page][key] and #db[page][key] or 0, RESP.integer
 	end,
 	RPOP = function(page, key)
 		if db[page][key] then

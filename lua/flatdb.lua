@@ -1,4 +1,4 @@
-local mp = require("MessagePack")
+local mp = require("msgpack")
 
 local function isFile(path)
 	local f = io.open(path, "r")
